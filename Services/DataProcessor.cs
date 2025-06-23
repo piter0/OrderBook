@@ -5,131 +5,106 @@ namespace SkyOrderBook.Services
 {
     internal sealed class DataProcessor : IDataProcessor<Record>
     {
-        private readonly Dictionary<decimal, Dictionary<long, int>> _bids = [];
-        private readonly Dictionary<decimal, Dictionary<long, int>> _asks = [];
+        private readonly Dictionary<long, OrderDetails> _orders = [];
+        private readonly SortedList<decimal, PriceLevel> _bids = [];
+        private readonly SortedList<decimal, PriceLevel> _asks = [];
 
         public IList<Record> Process(IList<Record> data)
         {
-            var output = new List<Record>();
             var dataLength = data.Count;
 
             for (var i = 0; i < dataLength; i++)
             {
-                if (data[i].Action == 'Y' || data[i].Action == 'F')
+
+                switch (data[i].Action)
                 {
-                    _bids.Clear();
-                    _asks.Clear();
-                    continue;
+                    case 'Y':
+                    case 'F':
+                        _orders.Clear();
+                        _bids.Clear();
+                        _asks.Clear();
+                        break;
+
+                    case 'A':
+                    case 'M':
+                        var book = GetBook(data[i].Side);
+                        RemoveOrder(data[i].OrderId, book);
+                        AddOrUpdateOrder(data[i], book);
+                        break;
+
+                    default:
+                        book = GetBook(data[i].Side);
+                        RemoveOrder(data[i].OrderId, book);
+                        break;
                 }
-                else if (data[i].Action == 'A' || data[i].Action == 'M')
+
+                if (_bids.Count > 0)
                 {
-                    var book = GetBook(data[i].Side);
-
-                    foreach (var priceLevel in book.Values)
-                    {
-                        if (priceLevel.ContainsKey(data[i].OrderId))
-                        {
-                            priceLevel.Remove(data[i].OrderId);
-                            break;
-                        }
-                    }
-
-                    if (!book.TryGetValue(data[i].Price, out Dictionary<long, int>? value))
-                    {
-                        value = [];
-                        book[data[i].Price] = value;
-                    }
-
-                    if (!value.ContainsKey(data[i].OrderId))
-                    {
-                        value.Add(data[i].OrderId, data[i].Qty);
-                    }
+                    var bestBid = _bids.Last();
+                    data[i].B0 = bestBid.Key;
+                    data[i].BQ0 = bestBid.Value.QtySum;
+                    data[i].BN0 = bestBid.Value.Count;
                 }
                 else
                 {
-                    var book = GetBook(data[i].Side);
+                    data[i].B0 = null;
+                    data[i].BQ0 = null;
+                    data[i].BN0 = null;
+                }
 
-                    if (book.TryGetValue(data[i].Price, out Dictionary<long, int>? value)
-                        && value.ContainsKey(data[i].OrderId))
+                if (_asks.Count > 0)
+                {
+                    var bestAsk = _asks.First();
+                    data[i].A0 = bestAsk.Key;
+                    data[i].AQ0 = bestAsk.Value.QtySum;
+                    data[i].AN0 = bestAsk.Value.Count;
+                }
+                else
+                {
+                    data[i].A0 = null;
+                    data[i].AQ0 = null;
+                    data[i].AN0 = null;
+                }
+            }
+
+            return data;
+        }
+
+        private SortedList<decimal, PriceLevel> GetBook(int? side) => side == 1 ? _bids : _asks;
+
+        private void RemoveOrder(long orderId, SortedList<decimal, PriceLevel> book)
+        {
+            if (_orders.TryGetValue(orderId, out var existing))
+            {
+                if (book.TryGetValue(existing.Price, out var level))
+                {
+                    level.QtySum -= existing.Qty;
+                    level.Count--;
+                    if (level.Count == 0)
                     {
-                        value.Remove(data[i].OrderId);
-                        if (book[data[i].Price].Count == 0)
-                        {
-                            book.Remove(data[i].Price);
-                        }
+                        book.Remove(existing.Price);
                     }
                 }
-
-                data[i].B0 = GetBestPrice(_bids);
-                data[i].BQ0 = GetOrdersQtySum(_bids, data[i].B0);
-                data[i].BN0 = GetOrdersCount(_bids, data[i].B0);
-
-                data[i].A0 = GetBestPrice(_asks, false);
-                data[i].AQ0 = GetOrdersQtySum(_asks, data[i].A0);
-                data[i].AN0 = GetOrdersCount(_asks, data[i].A0);
-
-                output.Add(data[i]);
+                _orders.Remove(orderId);
             }
-
-            return output;
         }
 
-        private Dictionary<decimal, Dictionary<long, int>> GetBook(int? side) => side == 1 ? _bids : _asks;
-
-        private static decimal? GetBestPrice(Dictionary<decimal, Dictionary<long, int>> book, bool isBid = true)
+        private void AddOrUpdateOrder(Record record, SortedList<decimal, PriceLevel> book)
         {
-            if (IsEmpty(book))
+            if (!book.TryGetValue(record.Price, out var level))
             {
-                return null;
+                level = new PriceLevel();
+                book[record.Price] = level;
             }
+            level.QtySum += record.Qty;
+            level.Count++;
 
-            return isBid ? book.Keys.Max() : book.Keys.Min();
+            _orders[record.OrderId] = new OrderDetails
+            {
+                Side = record.Side,
+                Price = record.Price,
+                Qty = record.Qty
+            };
         }
-
-        private static int? GetOrdersQtySum(Dictionary<decimal, Dictionary<long, int>> book, decimal? bestPrice)
-        {
-            if (IsEmpty(book))
-            {
-                return null;
-            }
-
-            var sum = 0;
-
-            if (bestPrice is not null)
-            {
-                var bestPriceOrders = book[(decimal)bestPrice];
-
-                foreach (var order in bestPriceOrders)
-                {
-                    sum += order.Value;
-                }
-            }
-
-            return sum;
-        }
-
-        private static int? GetOrdersCount(Dictionary<decimal, Dictionary<long, int>> book, decimal? bestPrice)
-        {
-            if (IsEmpty(book))
-            {
-                return null;
-            }
-
-            var sum = 0;
-
-            if (bestPrice is not null)
-            {
-                var bestPriceOrders = book[(decimal)bestPrice];
-
-                foreach (var order in bestPriceOrders)
-                {
-                    sum++;
-                }
-            }
-
-            return sum;
-        }
-
-        private static bool IsEmpty(Dictionary<decimal, Dictionary<long, int>> book) => book.Count == 0;
     }
 }
