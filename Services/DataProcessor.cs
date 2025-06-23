@@ -40,10 +40,13 @@ namespace SkyOrderBook.Services
 
                 if (_bids.Count > 0)
                 {
-                    var bestBid = _bids.Last();
-                    data[i].B0 = bestBid.Key;
-                    data[i].BQ0 = bestBid.Value.QtySum;
-                    data[i].BN0 = bestBid.Value.Count;
+                    int lastIndex = _bids.Count - 1;
+                    var bestBidPrice = _bids.Keys[lastIndex];
+                    var bestBidLevel = _bids.Values[lastIndex];
+
+                    data[i].B0 = bestBidPrice;
+                    data[i].BQ0 = bestBidLevel.QtySum;
+                    data[i].BN0 = bestBidLevel.Count;
                 }
                 else
                 {
@@ -54,10 +57,12 @@ namespace SkyOrderBook.Services
 
                 if (_asks.Count > 0)
                 {
-                    var bestAsk = _asks.First();
-                    data[i].A0 = bestAsk.Key;
-                    data[i].AQ0 = bestAsk.Value.QtySum;
-                    data[i].AN0 = bestAsk.Value.Count;
+                    var bestAskPrice = _asks.Keys[0];
+                    var bestAskLevel = _asks.Values[0];
+
+                    data[i].A0 = bestAskPrice;
+                    data[i].AQ0 = bestAskLevel.QtySum;
+                    data[i].AN0 = bestAskLevel.Count;
                 }
                 else
                 {
